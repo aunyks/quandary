@@ -13,7 +13,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/hmac"
 	"bufio"
+)
+
+const (
+	SALT_BYTES_LENGTH = 32
+	HASH_BYTES_LENGTH = 32
 )
 
 // Ask the user a question via stdout
@@ -74,25 +80,60 @@ func getFileBytes(path string) []byte {
 	return fileBytes
 }
 
+func hmacHash(bytes []byte, key []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(bytes)
+	return mac.Sum(nil)
+}
+
+func hmacAssertVerification(firstHash []byte, secondHash []byte) {
+	if(!hmac.Equal(firstHash, secondHash)){
+		panic("\nError in decryption! Either the file was tampered with or the decryption password was incorrect.")
+	}
+}
+
 func encryptBytes(bytes []byte, password string) []byte {
-	key := pbkdf2.Key([]byte(password), []byte{0x05, 0x02, 0x55, 0xd2}, 4096, 32, sha256.New)
+	// Generate salt
+	salt := make([]byte, SALT_BYTES_LENGTH)
+    _, err := io.ReadFull(rand.Reader, salt)
+    if err != nil {
+        panic("Error generating salt! Notify @aunyks. Exiting...")
+	}
+	// Create encryption key
+	key := pbkdf2.Key([]byte(password), salt, 4096, 32, sha256.New)
+	// Create block cipher
 	blockCipher, err := aes.NewCipher(key)
 	if(err != nil){
 		panic("Error creating encryption key! Notify @aunyks. Exiting...")
 	}
+	// Allocate block cipher
 	cipherBytes := make([]byte, aes.BlockSize + len(bytes))
+	// Create random initialization vector
 	iv := cipherBytes[:aes.BlockSize]
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		panic(err.Error())
 	}
+	// Encrypt and store ciphered bytes
 	stream := cipher.NewCFBEncrypter(blockCipher, iv)
 	stream.XORKeyStream(cipherBytes[aes.BlockSize:], bytes)
 
-	return cipherBytes
+	// Use encryption key to generate hmac hash
+	// of encrypted bytes
+	hash := hmacHash(cipherBytes, key)
+
+	// Store the salt with the encrypted bytes and hash
+	return append(append(salt, cipherBytes...), hash...)
 }
 
 func decryptBytes(bytes []byte, password string) []byte {
-	key := pbkdf2.Key([]byte(password), []byte{0x05, 0x02, 0x55, 0xd2}, 4096, 32, sha256.New)
+	// Extract salt
+	salt := bytes[:SALT_BYTES_LENGTH]
+	// Generate decryption key
+	key := pbkdf2.Key([]byte(password), salt, 4096, 32, sha256.New)
+	// Check the message for tampering or incorrect password
+	hash := bytes[len(bytes) - HASH_BYTES_LENGTH:]
+	hmacAssertVerification(hash, hmacHash(bytes[SALT_BYTES_LENGTH:len(bytes) - HASH_BYTES_LENGTH], key))
+	// If success, create new cipher
 	blockCipher, err := aes.NewCipher(key)
 	if(err != nil){
 		panic("Error creating decryption key! Notify @aunyks. Exiting...")
@@ -100,12 +141,14 @@ func decryptBytes(bytes []byte, password string) []byte {
 	if len(bytes) < aes.BlockSize {
 		panic("Input file not big enough! Is this the right file? Exiting...")
 	}
+	// Extract initialization vector and get bytes
 	iv := bytes[:aes.BlockSize]
 	bytes = bytes[aes.BlockSize:]
+	// Decrypt the bytes
 	stream := cipher.NewCFBDecrypter(blockCipher, iv)
 	stream.XORKeyStream(bytes, bytes)
-
-	return bytes
+	// Return decrypted bytes and ignore salt
+	return bytes[SALT_BYTES_LENGTH:len(bytes) - HASH_BYTES_LENGTH]
 }
 
 func writeFile(path string, bytes []byte) {
@@ -169,9 +212,6 @@ func main(){
 			writeFile(outputFilePath, plainBytes)
 		}
 		fmt.Println("Your new file is located at:\n" + outputFilePath)
-		if(decrypt) {
-			fmt.Println("\nNote: If the output file doesn't function properly, it's likely that wrong password was used to decrypt.\n")
-		}
 		fmt.Println("Goodbye!")
 		return nil
 	}
