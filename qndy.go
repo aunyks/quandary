@@ -3,18 +3,22 @@ package main
 import (
 	"fmt"
 	"os"
-	"github.com/urfave/cli"
-	"io/ioutil"
+	"bufio"
 	"io"
+	"io/ioutil"
 	"syscall"
-	"golang.org/x/crypto/ssh/terminal"
-	"golang.org/x/crypto/pbkdf2"
+
 	"crypto/sha256"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/hmac"
-	"bufio"
+
+	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/crypto/pbkdf2"
+
+	"github.com/CrowdSurge/banner"
+	"github.com/urfave/cli"
 )
 
 const (
@@ -167,6 +171,9 @@ func main(){
 	app.Usage = "Simple file encryption."
 	app.Action = func(c *cli.Context) error {
 		// Greet the user
+		banner.Print("quandary")
+		fmt.Println("========================================================")
+		fmt.Println("")
 		fmt.Println("Hello!")
 		// Ask what method to use
 		encryptOrDecrypt := promptABTest(
