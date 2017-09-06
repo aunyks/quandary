@@ -1,20 +1,7 @@
 # quandary
 Stupid simple file encryption from the terminal.  
 
-```
-$> qndy
-Hello!
-Would you like to encrypt or decrypt a file? (e or d) e
-Chose to encrypt!
-Provide the path of the file you'd like to encrypt:
-./file.txt
-Provide the path of the file you'd like to create:
-./encrypted-file.enc
-Awesome! Starting to encrypt...
-What's the encryption password? Your new file is located at:
-./encrypted-file.enc
-Goodbye!
-```
+![Quandary Example GIF](https://raw.githubusercontent.com/aunyks/quandary/master/quandary-example.gif)
 *Note: The encryption / decryption password will be hidden while you type it.* 
 
 **Dependencies:**  
