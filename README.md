@@ -22,7 +22,7 @@ go build qndy.go
 ```
 4. (Optional) Copy the newly created executable to your Path  
 
-5. Create a new Bitcoin wallet!
+5. Run Quandary!
 ```
 # On macOS / Linux
 ./qndy
