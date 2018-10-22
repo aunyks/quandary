@@ -1,6 +1,8 @@
 # quandary
 Stupid simple file encryption from the terminal.  
 
+Quandary uses PBKDF2 to derive an AES-256 key that's used to encrypt a provided file, and it uses HMAC-SHA256 to detect any tampering withe ciphered file bytes.
+
 ![Quandary Example GIF](https://raw.githubusercontent.com/aunyks/quandary/master/quandary-example.gif)
 *Note: The encryption / decryption password will be hidden while you type it.* 
 
