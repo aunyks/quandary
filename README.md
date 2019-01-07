@@ -34,4 +34,4 @@ rem On Windows
 start qndy.exe
 ```
 
-### If you have any questions or comments, open an issue, reach out on [Twitter](https://twitter.com/aunyks), or [email me](mailto:g.nash.dev@gmail.com)!
+### If you have any questions or comments, open an issue, reach out on [Twitter](https://twitter.com/aunyks), or [email me](mailto:me@aunyks.com)!

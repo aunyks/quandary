@@ -1,117 +1,80 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"bufio"
 	"io"
 	"io/ioutil"
-	"syscall"
+	"os"
 
-	"crypto/sha256"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 
-	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/crypto/pbkdf2"
 
-	"github.com/CrowdSurge/banner"
 	"github.com/urfave/cli"
 )
 
 const (
-	SALT_BYTES_LENGTH = 32
-	HASH_BYTES_LENGTH = 32
+	SaltBytesLength  = 32
+	HashBytesLength  = 32
+	AESKeySize       = 32
+	NumKDFIterations = 4096
 )
 
-// Ask the user a question via stdout
-// and read the response via stdin
-func prompt(inquiry string) string {
-	reader := bufio.NewReader(os.Stdin)
-	if(inquiry[len(inquiry) - 1:] == "\n"){
-		print(inquiry);
-	} else {
-		print(inquiry + " ");
-	}
-	text, _ := reader.ReadString('\n')
-	return text[0 : len(text) - 1]
-}
-
-// Ask the user a question via stdout
-// and read the response via stdin but hide the input
-func secretPrompt(inquiry string) string {
-	if(inquiry[len(inquiry) - 1:] == "\n"){
-		print(inquiry);
-	} else {
-		print(inquiry + " ");
-	}
-	text, _ := terminal.ReadPassword(int(syscall.Stdin))
-	return string(text)
-}
-  
 // Something went wrong! Let the user know
 // and exit immediately
 func panic(mayday string) {
 	println(mayday)
-	os.Exit(0)
+	os.Exit(1)
 }
-  
-// Prompt the user with two options. Then let the calling
-// process know which response was given via a boolean
-// value (true is for the a value, false for the b value).
-//
-// If neither are provided. We panic before any more processing
-// is handled
-func promptABTest(inquiry string, a string, b string) bool {
-	response := prompt(inquiry)
-	if(response == a){
-		return true
-	} else if (response == b) {
+
+func fileExists(path string) bool {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false
-	} else {
-		panic("Don't understand what you said. Bye!")
 	}
-	return false
+	return true
 }
 
 func getFileBytes(path string) []byte {
 	fileBytes, err := ioutil.ReadFile(path)
-	if(err != nil){
+	if err != nil {
 		panic("Could not read file: " + path + "\nExiting...")
 	}
 	return fileBytes
 }
 
-func hmacHash(bytes []byte, key []byte) []byte {
+// HmacHash generates a HMAC-SHA256 using the provided message bytes and key bytes
+func HmacHash(bytes []byte, key []byte) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write(bytes)
 	return mac.Sum(nil)
 }
 
 func hmacAssertVerification(firstHash []byte, secondHash []byte) {
-	if(!hmac.Equal(firstHash, secondHash)){
+	if !hmac.Equal(firstHash, secondHash) {
 		panic("\nError in decryption! Either the file was tampered with or the decryption password was incorrect.")
 	}
 }
 
-func encryptBytes(bytes []byte, password string) []byte {
+// EncryptBytes encrypts the provided plaintext bytes using AES-256 under the CFB mode of operation.
+// the ciphertext is also tagged with a HMAC-SHA256
+func EncryptBytes(bytes []byte, password string) []byte {
 	// Generate salt
-	salt := make([]byte, SALT_BYTES_LENGTH)
-    _, err := io.ReadFull(rand.Reader, salt)
-    if err != nil {
-        panic("Error generating salt! Notify @aunyks. Exiting...")
+	salt := make([]byte, SaltBytesLength)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		panic("Error generating salt! Notify @aunyks. Exiting...")
 	}
 	// Create encryption key
-	key := pbkdf2.Key([]byte(password), salt, 4096, 32, sha256.New)
+	key := pbkdf2.Key([]byte(password), salt, NumKDFIterations, AESKeySize, sha256.New)
 	// Create block cipher
 	blockCipher, err := aes.NewCipher(key)
-	if(err != nil){
+	if err != nil {
 		panic("Error creating encryption key! Notify @aunyks. Exiting...")
 	}
 	// Allocate block cipher
-	cipherBytes := make([]byte, aes.BlockSize + len(bytes))
+	cipherBytes := make([]byte, aes.BlockSize+len(bytes))
 	// Create random initialization vector
 	iv := cipherBytes[:aes.BlockSize]
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
@@ -123,27 +86,28 @@ func encryptBytes(bytes []byte, password string) []byte {
 
 	// Use encryption key to generate hmac hash
 	// of encrypted bytes
-	hash := hmacHash(cipherBytes, key)
+	hash := HmacHash(cipherBytes, key)
 
 	// Store the salt with the encrypted bytes and hash
 	return append(append(salt, cipherBytes...), hash...)
 }
 
-func decryptBytes(bytes []byte, password string) []byte {
+// DecryptBytes decrypts the provided plaintext bytes using AES-256 under the CFB mode of operation.
+func DecryptBytes(bytes []byte, password string) []byte {
 	// Extract salt
-	salt := bytes[:SALT_BYTES_LENGTH]
+	salt := bytes[:SaltBytesLength]
 	// Generate decryption key
-	key := pbkdf2.Key([]byte(password), salt, 4096, 32, sha256.New)
+	key := pbkdf2.Key([]byte(password), salt, NumKDFIterations, AESKeySize, sha256.New)
 	// Check the message for tampering or incorrect password
-	hash := bytes[len(bytes) - HASH_BYTES_LENGTH:]
-	hmacAssertVerification(hash, hmacHash(bytes[SALT_BYTES_LENGTH:len(bytes) - HASH_BYTES_LENGTH], key))
+	hash := bytes[len(bytes)-HashBytesLength:]
+	hmacAssertVerification(hash, HmacHash(bytes[SaltBytesLength:len(bytes)-HashBytesLength], key))
 	// If success, create new cipher
 	blockCipher, err := aes.NewCipher(key)
-	if(err != nil){
+	if err != nil {
 		panic("Error creating decryption key! Notify @aunyks. Exiting...")
 	}
 	if len(bytes) < aes.BlockSize {
-		panic("Input file not big enough! Is this the right file? Exiting...")
+		panic("Input file not large enough! Is this the right file? Exiting...")
 	}
 	// Extract initialization vector and get bytes
 	iv := bytes[:aes.BlockSize]
@@ -152,74 +116,82 @@ func decryptBytes(bytes []byte, password string) []byte {
 	stream := cipher.NewCFBDecrypter(blockCipher, iv)
 	stream.XORKeyStream(bytes, bytes)
 	// Return decrypted bytes and ignore salt
-	return bytes[SALT_BYTES_LENGTH:len(bytes) - HASH_BYTES_LENGTH]
+	return bytes[SaltBytesLength : len(bytes)-HashBytesLength]
 }
 
 func writeFile(path string, bytes []byte) {
-	if(ioutil.WriteFile(path, bytes, 0777) != nil){
+	if ioutil.WriteFile(path, bytes, 0777) != nil {
 		panic("Could not write to file: " + path + "\nExiting...")
 	}
 }
 
-func main(){
-	encrypt := false
-	decrypt := false
-	var inputFilePath string
+func main() {
+	var plaintextFilepath string
+	var ciphertextFilepath string
+	var outputFilepath string
+	var password string
 	app := cli.NewApp()
 	app.Name = "qndy"
-	app.Version = "1.0.0"
+	app.Version = "2.0.0"
 	app.Usage = "Simple file encryption."
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:        "encrypt, e",
+			Usage:       "Encrypt the specified file",
+			Destination: &plaintextFilepath,
+		},
+		cli.StringFlag{
+			Name:        "decrypt, d",
+			Usage:       "Decrypt the specified file",
+			Destination: &ciphertextFilepath,
+		},
+		cli.StringFlag{
+			Name:        "password, p",
+			Usage:       "The encryption/decryption password",
+			Destination: &password,
+		},
+		cli.StringFlag{
+			Name:        "output, o",
+			Usage:       "The output filepath",
+			Destination: &outputFilepath,
+		},
+	}
 	app.Action = func(c *cli.Context) error {
-		// Greet the user
-		banner.Print("quandary")
-		fmt.Println("========================================================")
-		fmt.Println("")
-		fmt.Println("Hello!")
-		// Ask what method to use
-		encryptOrDecrypt := promptABTest(
-			"Would you like to encrypt or decrypt a file? (e or d)",
-			"e",
-			"d",
-		)
-		// Tell them what we received
-		if(encryptOrDecrypt){
-			fmt.Println("Chose to encrypt!")
-			encrypt = true
-		} else {
-			fmt.Println("Chose to decrypt!")
-			decrypt = true
+		if plaintextFilepath != "" && ciphertextFilepath != "" {
+			panic("Cannot encrypt and decrypt simultaneously!")
 		}
-		// Get the input file
-		if(encrypt){
-			inputFilePath = prompt("Provide the path of the file you'd like to encrypt:\n")
-		} else {
-			inputFilePath = prompt("Provide the path of the file you'd like to decrypt:\n")
+		if plaintextFilepath == "" && ciphertextFilepath == "" {
+			panic("A file must be encrypted or decrypted!")
 		}
-		// Panic if the input file doesn't exist
-		if _, err := os.Stat(inputFilePath); os.IsNotExist(err) {
-			panic("The input file doesn't exist! Bye...")
+		if outputFilepath == "" {
+			panic("An output file path must be specified!")
 		}
-		// Get the output file
-		outputFilePath := prompt("Provide the path of the file you'd like to create:\n")
-		// Panic if the output file already exists
-		if _, err := os.Stat(outputFilePath); !os.IsNotExist(err) {
-			panic("The output file already exists! Bye...")
+		if fileExists(outputFilepath) {
+			panic("The output file already exists!")
 		}
-		if(encrypt){
-			fmt.Println("Awesome! Starting to encrypt...")
-			password := secretPrompt("What's the encryption password?")
+		if plaintextFilepath != "" {
+			if password == "" {
+				panic("An encryption password must be provided!")
+			}
+			inputFilePath := plaintextFilepath
+			if !fileExists(inputFilePath) {
+				panic("Input file doesn't exist!")
+			}
 			inputFileBytes := getFileBytes(inputFilePath)
-			cipherBytes := encryptBytes(inputFileBytes, password)
-			writeFile(outputFilePath, cipherBytes)
+			cipherText := EncryptBytes(inputFileBytes, password)
+			writeFile(outputFilepath, cipherText)
 		} else {
-			fmt.Println("Awesome! Starting to decrypt...")
-			password := secretPrompt("What's the decryption password?")
+			if password == "" {
+				panic("A decryption password must be provided!")
+			}
+			inputFilePath := ciphertextFilepath
+			if !fileExists(inputFilePath) {
+				panic("Input file doesn't exist!")
+			}
 			inputFileBytes := getFileBytes(inputFilePath)
-			plainBytes := decryptBytes(inputFileBytes, password)
-			writeFile(outputFilePath, plainBytes)
+			plaintextBytes := DecryptBytes(inputFileBytes, password)
+			writeFile(outputFilepath, plaintextBytes)
 		}
-		fmt.Println("Your new file is located at:\n" + outputFilePath)
-		fmt.Println("Goodbye!")
 		return nil
 	}
 	app.Run(os.Args)
