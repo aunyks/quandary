@@ -31,3 +31,6 @@ qndy -h
 ```
 
 ### If you have any questions or comments, open an issue, reach out on [Twitter](https://twitter.com/aunyks), or [email me](mailto:me@aunyks.com)!
+
+Copyright (c) 2017-2019 Gerald Nash  
+Licensed under the GNU General Public License Version 3 (GPLv3)
