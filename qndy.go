@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"io/ioutil"
 	"os"
@@ -58,27 +59,33 @@ func hmacAssertVerification(firstHash []byte, secondHash []byte) {
 	}
 }
 
+// PasswordEncrypt encrypts the provided plaintext bytes using the provided password
+func PasswordEncrypt(bytes []byte, password string) ([]byte, error) {
+	passKey := []byte(password)
+	return EncryptBytes(bytes, passKey)
+}
+
 // EncryptBytes encrypts the provided plaintext bytes using AES-256 under the CFB mode of operation.
 // the ciphertext is also tagged with a HMAC-SHA256
-func EncryptBytes(bytes []byte, password string) []byte {
+func EncryptBytes(bytes []byte, passKey []byte) ([]byte, error) {
 	// Generate salt
 	salt := make([]byte, SaltBytesLength)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-		panic("Error generating salt! Notify @aunyks. Exiting...")
+		return nil, errors.New("Error generating salt")
 	}
 	// Create encryption key
-	key := pbkdf2.Key([]byte(password), salt, NumKDFIterations, AESKeySize, sha256.New)
+	key := pbkdf2.Key(passKey, salt, NumKDFIterations, AESKeySize, sha256.New)
 	// Create block cipher
 	blockCipher, err := aes.NewCipher(key)
 	if err != nil {
-		panic("Error creating encryption key! Notify @aunyks. Exiting...")
+		return nil, errors.New("Error creating encryption key")
 	}
 	// Allocate block cipher
 	cipherBytes := make([]byte, aes.BlockSize+len(bytes))
 	// Create random initialization vector
 	iv := cipherBytes[:aes.BlockSize]
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 	// Encrypt and store ciphered bytes
 	stream := cipher.NewCFBEncrypter(blockCipher, iv)
@@ -89,25 +96,31 @@ func EncryptBytes(bytes []byte, password string) []byte {
 	hash := HmacHash(cipherBytes, key)
 
 	// Store the salt with the encrypted bytes and hash
-	return append(append(salt, cipherBytes...), hash...)
+	return append(append(salt, cipherBytes...), hash...), nil
+}
+
+// PasswordDecrypt decrypts the provided plaintext bytes using the provided password
+func PasswordDecrypt(bytes []byte, password string) ([]byte, error) {
+	passKey := []byte(password)
+	return DecryptBytes(bytes, passKey)
 }
 
 // DecryptBytes decrypts the provided plaintext bytes using AES-256 under the CFB mode of operation.
-func DecryptBytes(bytes []byte, password string) []byte {
+func DecryptBytes(bytes []byte, passKey []byte) ([]byte, error) {
 	// Extract salt
 	salt := bytes[:SaltBytesLength]
 	// Generate decryption key
-	key := pbkdf2.Key([]byte(password), salt, NumKDFIterations, AESKeySize, sha256.New)
+	key := pbkdf2.Key(passKey, salt, NumKDFIterations, AESKeySize, sha256.New)
 	// Check the message for tampering or incorrect password
 	hash := bytes[len(bytes)-HashBytesLength:]
 	hmacAssertVerification(hash, HmacHash(bytes[SaltBytesLength:len(bytes)-HashBytesLength], key))
 	// If success, create new cipher
 	blockCipher, err := aes.NewCipher(key)
 	if err != nil {
-		panic("Error creating decryption key! Notify @aunyks. Exiting...")
+		return nil, errors.New("Error creating decryption key")
 	}
 	if len(bytes) < aes.BlockSize {
-		panic("Input file not large enough! Is this the right file? Exiting...")
+		return nil, errors.New("Input file not large enough")
 	}
 	// Extract initialization vector and get bytes
 	iv := bytes[:aes.BlockSize]
@@ -116,7 +129,7 @@ func DecryptBytes(bytes []byte, password string) []byte {
 	stream := cipher.NewCFBDecrypter(blockCipher, iv)
 	stream.XORKeyStream(bytes, bytes)
 	// Return decrypted bytes and ignore salt
-	return bytes[SaltBytesLength : len(bytes)-HashBytesLength]
+	return bytes[SaltBytesLength : len(bytes)-HashBytesLength], nil
 }
 
 func writeFile(path string, bytes []byte) {
@@ -132,7 +145,7 @@ func main() {
 	var password string
 	app := cli.NewApp()
 	app.Name = "qndy"
-	app.Version = "2.0.0"
+	app.Version = "2.1.0"
 	app.Usage = "Simple file encryption."
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
@@ -178,8 +191,12 @@ func main() {
 				panic("Input file doesn't exist!")
 			}
 			inputFileBytes := getFileBytes(inputFilePath)
-			cipherText := EncryptBytes(inputFileBytes, password)
-			writeFile(outputFilepath, cipherText)
+			cipherText, encryptionErr := PasswordEncrypt(inputFileBytes, password)
+			if encryptionErr != nil {
+				panic("Error while encrypting file!")
+			} else {
+				writeFile(outputFilepath, cipherText)
+			}
 		} else {
 			if password == "" {
 				panic("A decryption password must be provided!")
@@ -189,8 +206,12 @@ func main() {
 				panic("Input file doesn't exist!")
 			}
 			inputFileBytes := getFileBytes(inputFilePath)
-			plaintextBytes := DecryptBytes(inputFileBytes, password)
-			writeFile(outputFilepath, plaintextBytes)
+			plaintextBytes, decryptionErr := PasswordDecrypt(inputFileBytes, password)
+			if decryptionErr != nil {
+				panic("Error while decrypting file!")
+			} else {
+				writeFile(outputFilepath, plaintextBytes)
+			}
 		}
 		return nil
 	}
